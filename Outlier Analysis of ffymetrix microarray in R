@@ -1,0 +1,127 @@
+Affymetrix microarray experiment (HGU133A array).  
+Investigating patient data if they matched normal and stage 1 or stage 2 clear cell renal cell carcinoma (cRCC) tumors to provide insight into the molecular pathogenesis of cRCC.
+
+
+renal_dat <- read.table("renal_cell_carcinoma/renal_cell_carcinoma.txt", header=T, row.names=1)
+dim(renal_dat)
+
+colnames(renal_dat)[1:11] <- paste0(colnames(renal_dat)[1:11], "_Normal")
+colnames(renal_dat)[12:22] <- paste0(colnames(renal_dat)[12:22], "_Tumor")
+#past with the original name and addition and reassing to original col names
+
+
+#check missing dat
+sum(is.na(renal_dat))
+
+#Correlation plot, heat map
+dat_corr <- cor(renal_dat, use="pairwise.complete.obs", method="pearson")
+
+heatmap(dat_corr, main="Heat map of Correlation", xlab="GSM ID", ylab="GSM ID", margins = c(10,10), 
+Rowv = NA, Colv = NA, col = colorRampPalette(c("blue", "white", "red"))(100))
+#Rowv, Colv=NA removes the dendrogram on the heatmap
+
+#Hierarchical clustering dendrogram
+
+dist <- as.dist(1-dat_corr)	#converts to distance (1-Correlation)
+
+dist_hc <- hclust(dist, method="average")
+plot(dist_hc, main="Hierarchical clustering dendrogram based on distance", xlab="Sample ID",hang =-1, cex =1)
+
+#CV vs mean (Coefficient of Variation vs. Mean) plot
+
+#cv=standard deviation/mean
+#mean
+gene_mean = rowMeans(renal_dat, na.rm=T)
+gene_sd = apply(renal_dat, 1, sd)
+gene_cv = gene_sd/gene_mean
+
+plot(gene_mean, gene_cv, log ="x", main = "CV vs main(log) plot", xlab = "Gene mean in log",
+ylab="Coefficient of Variation", pch=16, col="red", cex=0.5)
+
+abline(h=1, col="blue", lty=2) # adds a dashed line at y=1 for reference
+
+#Average Correlation plot
+
+avg_corr <- apply(dat_corr, 1, function(x) mean(x[-which.max(x)]))
+#calculates the average correlation with all other sample across the rows
+
+par(mar = c(12, 4, 4, 2)) 
+barplot(avg_corr, main = "Average Correlation per Sample", ylab = "Average Correlation", xlab = "",
+col = "darkgreen", las = 2) #las rotates sample label
+title(xlab="Sample ID", line = 10) #moves the label so it does not overlap with sampleID
+
+
+library(impute)
+
+outliers <- c("GSM146798_Normal", "GSM146799_Tumor") 
+dat_clean <- renal_dat[, !colnames(renal_dat) %in% outliers]
+#keeps all row. Checks if colnames is in outliers, if so ! makes all other column true and only keep those
+
+
+#Retrived from NCBI/GEO with the provided GEO accession number and gene search
+KNG1_probes <- c("206054_at", "217512_at")
+AQP2_probes <- "206672_at"
+
+#kng1 plot
+par(mfrow=c(1,2))  # two plots side by side
+for (probe in KNG1_probes){
+plot(as.numeric(dat_clean[probe, ]), type="l", main = paste("KNG1 probe: ",probe), xlab="Sample", 
+ylab="Expression Intensity", col="purple")
+}
+
+#AQP2 plots
+
+plot(as.numeric(dat_clean[AQP2_probes, ]), type="l", main = paste("AQP2 probe: ",probe), xlab="Sample", 
+ylab="Expression Intensity", col="red")
+
+#save the original data = 8385.3
+original_value <- dat_clean["206054_at","GSM146784_Normal"]
+#set the data as NA 
+dat_clean["206054_at","GSM146784_Normal"] <- NA 
+dat_matrix <- as.matrix(dat_clean)
+
+
+imputed_data <- impute.knn(dat_matrix, k=6)
+impute_matrix <- imputed_data$data #store only the data matrix created from the function
+#find our data of intreast
+knn_value<- impute_matrix["206054_at","GSM146784_Normal"]
+#knn_value = 7559.533
+
+
+#relative error = abs(original-impute)/abs(original)
+impute_relative_error = abs(original_value-knn_value)/abs(original_value)
+#impute_relative_error = 0.09847789
+
+
+library(pcaMethods) #BiocManager::install("pcaMethods")
+SVD_impute <-pca(dat_matrix, method="svd", nPcs=9)
+SVD_value <- completeObs(SVD_impute)
+SVD_value <- SVD_value["206054_at","GSM146784_Normal"]
+#SVD value= 9427.891
+SVD_relative_error = abs(original_value-SVD_value)/abs(original_value)
+#SVD_relative_error  = 0.1243356
+
+
+#Replace the original_value
+dat_clean["206054_at", "GSM146784_Normal"] <- original_value
+gene_profile <- as.numeric(dat_clean["206054_at", ])
+
+plot(gene_profile, type = "l", col = "gray30", lwd = 2,
+     xlab = "Sample (Array)", ylab = "Expression Intensity",
+     main = "KNG1 Gene Profile (Probeset: 206054_at)")
+
+#GSM146784_Normal = gene_profile[4]
+# original value
+points(4, original_value, col = "blue", pch = 19, cex = 1.5)
+#x,y,color,pch,cex
+
+# KNN-imputed value
+points(4, knn_value, col = "red", pch = 17, cex = 1.5)
+
+# SVD-imputed value
+points(4, SVD_value, col = "forestgreen", pch = 15, cex = 1.5)
+
+# Add legend
+legend("topright", legend = c("Original", "KNN Imputed", "SVD Imputed"),
+       col = c("blue", "red", "forestgreen"),
+       pch = c(19, 17, 15), pt.cex = 1.5)
